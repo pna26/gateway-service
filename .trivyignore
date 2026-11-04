@@ -1,0 +1,11 @@
+# Achados do Trivy aceitos conscientemente (revisar a cada entrega).
+
+# k8s/k8s.yaml usa ":latest" só como base: no deploy o CI troca pela tag do
+# commit (sha-xxxxxxx) antes do kubectl apply.
+KSV-0013
+
+# ghcr.io/pna26 é o registry da própria organização (ou o ECR do grupo, no CI).
+KSV-0125
+
+# Falso positivo: a ConfigMap só tem URLs internas (AUTH_URI etc.), nenhum segredo.
+KSV-01010

@@ -1,0 +1,89 @@
+spring:
+  application:
+    name: gateway
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 500ms
+
+  cloud:
+    gateway:
+      server:
+        webflux:
+
+          default-filters:
+            # só o gateway pode definir o id-account (ver AuthorizationFilter)
+            - RemoveRequestHeader=id-account
+            - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+
+          globalcors:
+            corsConfigurations:
+              '[/**]':
+                allowedOrigins: ${CORS_ALLOWED_ORIGINS:http://localhost,http://localhost:3000,http://localhost:8080}
+                allowedHeaders: "*"
+                allowedMethods: "*"
+                allowCredentials: true
+
+          httpclient:
+            connect-timeout: 2000
+            response-timeout: 10s
+
+          routes:
+
+            - id: auth
+              uri: ${AUTH_URI:http://auth:8080}
+              predicates:
+                - Path=/auth/**
+
+            - id: account
+              uri: ${ACCOUNT_URI:http://account:8080}
+              predicates:
+                - Path=/accounts/**
+
+            - id: exchange
+              uri: ${EXCHANGE_URI:http://exchange:8080}
+              predicates:
+                - Path=/exchange/**
+
+            # o enunciado usa /exchange e /exchanges: o contrato fechou /exchange,
+            # e /exchanges continua funcionando como apelido
+            - id: exchanges-alias
+              uri: ${EXCHANGE_URI:http://exchange:8080}
+              predicates:
+                - Path=/exchanges/**
+              filters:
+                - RewritePath=/exchanges/(?<segment>.*), /exchange/$\{segment}
+
+store:
+  gateway:
+    auth:
+      uri: ${AUTH_URI:http://auth:8080}
+      timeout: ${AUTH_TIMEOUT:3s}
+    cache:
+      enabled: ${TOKEN_CACHE_ENABLED:true}
+      ttl: ${TOKEN_CACHE_TTL:5m}
+
+management:
+  endpoints:
+    web:
+      base-path: /gateway/actuator
+      exposure:
+        include: [ 'health', 'info', 'prometheus' ]
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  health:
+    # o redis é só cache: se cair, o gateway continua respondendo (sem cache)
+    redis:
+      enabled: false
+  metrics:
+    tags:
+      application: gateway
+
+logging:
+  level:
+    root: info
+    store: ${LOG_LEVEL_STORE:info}
