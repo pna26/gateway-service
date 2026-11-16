@@ -20,7 +20,8 @@ import reactor.core.publisher.Mono;
  * 2. sem cookie __store_jwt_token   -> 401;
  * 3. token no cache (Redis)         -> usa o id em cache;
  * 4. senão, POST /auth/solve        -> 401 se inválido, 503 se o Auth estiver fora;
- * 5. repassa o id no header id-account para o serviço de destino.
+ * 5. RBAC (AccessPolicy): papel sem permissão para a rota -> 403;
+ * 6. repassa o id no header id-account para o serviço de destino.
  *
  * O header id-account enviado pelo cliente já foi removido pelo default-filter
  * RemoveRequestHeader (application.yaml), que roda antes deste filtro.
@@ -39,11 +40,14 @@ public class AuthorizationFilter implements GlobalFilter, Ordered {
     private final RouterValidator routerValidator;
     private final AuthClient authClient;
     private final TokenCache tokenCache;
+    private final AccessPolicy accessPolicy;
 
-    public AuthorizationFilter(RouterValidator routerValidator, AuthClient authClient, TokenCache tokenCache) {
+    public AuthorizationFilter(RouterValidator routerValidator, AuthClient authClient,
+                               TokenCache tokenCache, AccessPolicy accessPolicy) {
         this.routerValidator = routerValidator;
         this.authClient = authClient;
         this.tokenCache = tokenCache;
+        this.accessPolicy = accessPolicy;
     }
 
     @Override
@@ -70,9 +74,15 @@ public class AuthorizationFilter implements GlobalFilter, Ordered {
         // os erros tratados aqui são só os da validação do token; erros do
         // serviço de destino (depois do chain.filter) seguem o fluxo normal
         return resolve(jwt)
-            .flatMap(result -> result.idAccount() != null
-                ? chain.filter(withIdAccount(exchange, result.idAccount()))
-                : reject(exchange, result.status()));
+            .flatMap(result -> {
+                if (result.identity() == null) return reject(exchange, result.status());
+                if (!accessPolicy.allows(exchange, result.identity())) {
+                    logger.debug("rbac negou: {} {} papel={}", request.getMethod(),
+                        request.getURI().getPath(), result.identity().role());
+                    return reject(exchange, HttpStatus.FORBIDDEN);
+                }
+                return chain.filter(withIdAccount(exchange, result.identity().idAccount()));
+            });
     }
 
     private Mono<Resolution> resolve(String jwt) {
@@ -88,8 +98,8 @@ public class AuthorizationFilter implements GlobalFilter, Ordered {
             });
     }
 
-    private record Resolution(String idAccount, HttpStatus status) {
-        static Resolution ok(String idAccount) { return new Resolution(idAccount, null); }
+    private record Resolution(Identity identity, HttpStatus status) {
+        static Resolution ok(Identity identity) { return new Resolution(identity, null); }
         static Resolution fail(HttpStatus status) { return new Resolution(null, status); }
     }
 

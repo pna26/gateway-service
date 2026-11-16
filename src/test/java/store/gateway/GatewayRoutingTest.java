@@ -52,6 +52,11 @@ class GatewayRoutingTest {
             server.createContext("/auth/solve", ex -> {
                 final String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
                 if (body.contains("\"token\":\"jwt-ok\"")) {
+                    send(ex, 200, "{\"idAccount\":\"42\",\"role\":\"USER\"}");
+                } else if (body.contains("\"token\":\"jwt-admin\"")) {
+                    send(ex, 200, "{\"idAccount\":\"1\",\"role\":\"ADMIN\"}");
+                } else if (body.contains("\"token\":\"jwt-antigo\"")) {
+                    // Auth de antes do RBAC: sem role
                     send(ex, 200, "{\"idAccount\":\"42\"}");
                 } else {
                     send(ex, 401, "");
@@ -109,11 +114,71 @@ class GatewayRoutingTest {
     }
 
     @Test
-    void accountsComTokenValidoRecebeIdAccount() {
-        client.get().uri("/accounts").cookie("__store_jwt_token", "jwt-ok")
+    void propriaContaComTokenValidoRecebeIdAccount() {
+        client.get().uri("/accounts/42").cookie("__store_jwt_token", "jwt-ok")
             .exchange()
             .expectStatus().isOk()
             .expectBody().jsonPath("$.idAccount").isEqualTo("42");
+    }
+
+    // ---- RBAC ----
+
+    @Test
+    void userNaoListaTodasAsContas() {
+        client.get().uri("/accounts").cookie("__store_jwt_token", "jwt-ok")
+            .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void userNaoVeContaDeOutro() {
+        client.get().uri("/accounts/43").cookie("__store_jwt_token", "jwt-ok")
+            .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void userNaoApagaNemAPropriaConta() {
+        client.delete().uri("/accounts/42").cookie("__store_jwt_token", "jwt-ok")
+            .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void userNaoChamaRotaInternaDoAccount() {
+        client.post().uri("/accounts/login").cookie("__store_jwt_token", "jwt-ok")
+            .exchange().expectStatus().isForbidden();
+    }
+
+    @Test
+    void variacoesDaUrlNaoContornamARegra() {
+        for (String uri : new String[] {
+            "/accounts/", "/accounts;x=1", "/accounts/42;x=1", "/accounts/42/../43", "/accounts/42/x"
+        }) {
+            client.get().uri(uri).cookie("__store_jwt_token", "jwt-ok")
+                .exchange().expectStatus().isForbidden();
+        }
+    }
+
+    @Test
+    void tokenSemPapelValeUser() {
+        client.get().uri("/accounts").cookie("__store_jwt_token", "jwt-antigo")
+            .exchange().expectStatus().isForbidden();
+        client.get().uri("/accounts/42").cookie("__store_jwt_token", "jwt-antigo")
+            .exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void adminListaEApagaContas() {
+        client.get().uri("/accounts").cookie("__store_jwt_token", "jwt-admin")
+            .exchange().expectStatus().isOk();
+        client.get().uri("/accounts/43").cookie("__store_jwt_token", "jwt-admin")
+            .exchange().expectStatus().isOk();
+        client.delete().uri("/accounts/43").cookie("__store_jwt_token", "jwt-admin")
+            .exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void userUsaAsDemaisRotasAutenticadas() {
+        client.get().uri("/exchange/USD/BRL").cookie("__store_jwt_token", "jwt-ok")
+            .exchange().expectStatus().isOk();
     }
 
     @Test
@@ -122,7 +187,7 @@ class GatewayRoutingTest {
         client.get().uri("/accounts").header("id-account", "999")
             .exchange().expectStatus().isUnauthorized();
         // com token: o serviço recebe o id do token, não o forjado
-        client.get().uri("/accounts").header("id-account", "999").cookie("__store_jwt_token", "jwt-ok")
+        client.get().uri("/accounts/42").header("id-account", "999").cookie("__store_jwt_token", "jwt-ok")
             .exchange()
             .expectStatus().isOk()
             .expectBody().jsonPath("$.idAccount").isEqualTo("42");

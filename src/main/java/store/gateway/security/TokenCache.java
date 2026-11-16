@@ -33,7 +33,9 @@ import reactor.core.publisher.Mono;
  * - a chave é o SHA-256 do token, nunca o token em si;
  * - o TTL nunca passa do "exp" do JWT (token expirado não fica no cache);
  * - se o Redis cair, o gateway continua funcionando chamando o Auth (fail-open
- *   só do cache, a validação continua obrigatória).
+ *   só do cache, a validação continua obrigatória);
+ * - o valor é "id papel" (RBAC); um valor no formato antigo (só o id) conta
+ *   como miss, para nunca usar um papel desconhecido.
  */
 @Component
 public class TokenCache {
@@ -72,10 +74,11 @@ public class TokenCache {
             .register(registry);
     }
 
-    /** id da conta em cache para o token, ou vazio (miss, cache desligado ou Redis fora). */
-    public Mono<String> get(String jwt) {
+    /** id e papel em cache para o token, ou vazio (miss, cache desligado ou Redis fora). */
+    public Mono<Identity> get(String jwt) {
         if (!enabled) return Mono.empty();
         return redis.opsForValue().get(key(jwt))
+            .mapNotNull(TokenCache::decode)
             .doOnNext(id -> hits.increment())
             .switchIfEmpty(Mono.defer(() -> {
                 misses.increment();
@@ -88,18 +91,30 @@ public class TokenCache {
             });
     }
 
-    /** guarda token -> id com TTL = min(ttl configurado, tempo até o exp do JWT). */
-    public Mono<Void> put(String jwt, String idAccount) {
+    /** guarda token -> "id papel" com TTL = min(ttl configurado, tempo até o exp do JWT). */
+    public Mono<Void> put(String jwt, Identity identity) {
         if (!enabled) return Mono.empty();
         final Duration effective = effectiveTtl(jwt, Instant.now());
         if (effective.isZero() || effective.isNegative()) return Mono.empty();
-        return redis.opsForValue().set(key(jwt), idAccount, effective)
+        return redis.opsForValue().set(key(jwt), encode(identity), effective)
             .then()
             .onErrorResume(e -> {
                 errors.increment();
                 logger.warn("não consegui gravar no redis: {}", e.getMessage());
                 return Mono.empty();
             });
+    }
+
+    static String encode(Identity identity) {
+        return identity.idAccount() + " " + identity.role();
+    }
+
+    /** null para valor fora do formato "id papel" (ex.: gravado antes do RBAC). */
+    static Identity decode(String value) {
+        final String[] parts = value.split(" ");
+        return parts.length == 2 && !parts[0].isBlank() && !parts[1].isBlank()
+            ? new Identity(parts[0], parts[1])
+            : null;
     }
 
     Duration effectiveTtl(String jwt, Instant now) {

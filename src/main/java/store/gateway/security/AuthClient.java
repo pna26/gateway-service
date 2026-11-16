@@ -13,7 +13,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 /**
- * Cliente do Auth: troca o JWT pelo id da conta chamando POST /auth/solve.
+ * Cliente do Auth: troca o JWT pelo id da conta e pelo papel (RBAC)
+ * chamando POST /auth/solve.
  */
 @Component
 public class AuthClient {
@@ -34,10 +35,10 @@ public class AuthClient {
     }
 
     /**
-     * @return o id da conta dono do token; {@link InvalidTokenException} se o
+     * @return id e papel do dono do token; {@link InvalidTokenException} se o
      *         Auth recusar o token (4xx); outro erro se o Auth estiver fora.
      */
-    public Mono<String> solve(String jwt) {
+    public Mono<Identity> solve(String jwt) {
         return webClient.post()
             .uri("/auth/solve")
             .contentType(MediaType.APPLICATION_JSON)
@@ -52,7 +53,7 @@ public class AuthClient {
                 final String id = body.get("idAccount");
                 return id == null || id.isBlank()
                     ? Mono.error(new InvalidTokenException())
-                    : Mono.just(id);
+                    : Mono.just(new Identity(id, body.get("role")));
             });
     }
 

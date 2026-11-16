@@ -40,6 +40,16 @@ class TokenCacheTest {
     }
 
     @Test
+    void valorGuardaIdEPapel() {
+        final Identity admin = new Identity("42", "ADMIN");
+        assertEquals("42 ADMIN", TokenCache.encode(admin));
+        assertEquals(admin, TokenCache.decode("42 ADMIN"));
+        // formato antigo (só o id, de antes do RBAC): miss, nunca um papel inventado
+        assertNull(TokenCache.decode("42"));
+        assertNull(TokenCache.decode("42 ADMIN extra"));
+    }
+
+    @Test
     void leExpDoPayload() {
         assertEquals(1_900_000_000L, TokenCache.expiration(jwtWithExp(1_900_000_000L)));
         assertNull(TokenCache.expiration("lixo"));
