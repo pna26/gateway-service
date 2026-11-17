@@ -20,6 +20,7 @@ import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.ServerWebExchange;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import reactor.core.publisher.Mono;
 
 class AuthorizationFilterTest {
@@ -36,7 +37,8 @@ class AuthorizationFilterTest {
         tokenCache = mock(TokenCache.class);
         when(tokenCache.get(any())).thenReturn(Mono.empty());
         when(tokenCache.put(any(), any())).thenReturn(Mono.empty());
-        filter = new AuthorizationFilter(new RouterValidator(), authClient, tokenCache);
+        filter = new AuthorizationFilter(new RouterValidator(), authClient, tokenCache,
+            new AccessPolicy(new SimpleMeterRegistry()));
         forwarded = new AtomicReference<>();
         chain = exchange -> {
             forwarded.set(exchange);
@@ -68,15 +70,16 @@ class AuthorizationFilterTest {
 
     @Test
     void tokenValidoRepassaIdAccountEGravaNoCache() {
-        when(authClient.solve("jwt-ok")).thenReturn(Mono.just("42"));
+        final Identity ana = new Identity("42", "USER");
+        when(authClient.solve("jwt-ok")).thenReturn(Mono.just(ana));
         filter.filter(get("/accounts", "jwt-ok"), chain).block();
         assertEquals("42", forwarded.get().getRequest().getHeaders().getFirst("id-account"));
-        verify(tokenCache).put("jwt-ok", "42");
+        verify(tokenCache).put("jwt-ok", ana);
     }
 
     @Test
     void cacheHitNaoChamaOAuth() {
-        when(tokenCache.get("jwt-ok")).thenReturn(Mono.just("42"));
+        when(tokenCache.get("jwt-ok")).thenReturn(Mono.just(new Identity("42", "USER")));
         filter.filter(get("/accounts", "jwt-ok"), chain).block();
         assertEquals("42", forwarded.get().getRequest().getHeaders().getFirst("id-account"));
         verify(authClient, never()).solve(any());
